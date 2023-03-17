@@ -64,7 +64,7 @@ def list_all_possible_groups(tree, matrix, depth):
     return list(itertools.combinations(np.arange(p), k))
 
 
-def graph_of_incompatibility(l):
+def graph_of_incompatibility(l, comm_matrix):
     def to_str(val):
         if type(val) == 'numpy.int64':
             return val.astype('str')
@@ -79,11 +79,33 @@ def graph_of_incompatibility(l):
                 node1 = '-'.join([to_str(num) for num in l[i]])
                 node2 = '-'.join([to_str(num) for num in l[j]])
                 nx.add_path(graph, [node1, node2])
+    
+    # weight(グルーピングの評価値)の計算
+    for node in graph.nodes:
+        vprocs = list(map(int, node.split('-')))
+        perm = list(itertools.permutations(vprocs, 2))
+
+        comm_sum = sum([sum(comm_matrix[v]) for v in vprocs])
+        comm_intergroup = sum([comm_matrix[p[0]][p[1]] for p in perm])
+        # print(comm_sum, comm_intergroup, comm_sum - comm_intergroup)
+        graph.nodes[node]['weight'] = comm_sum - comm_intergroup
+
     return graph
 
 
 def get_independent_set(graph, seed=0xbeaf):
-    indep_set =  nx.maximal_independent_set(graph, seed=seed)
+    ### NetworkX default algorithm
+    # indep_set = nx.maximal_independent_set(graph, seed=seed)
+
+    ### Smallest values first algorithm
+    indep_set = []
+    vertices = sorted([{'name': k, 'weight': w} for k, w in nx.get_node_attributes(graph, 'weight').items()], key=lambda v: v['weight'])
+    while len(vertices) > 0:
+        v = vertices.pop(0)
+        indep_set.append(v['name'])
+        adj = [k for k in graph.adj[v['name']].keys()]
+        vertices = [v for v in vertices if v['name'] not in adj]
+
     return [tuple(map(int, s.split('-'))) for s in indep_set]
 
 
@@ -92,7 +114,7 @@ def group_procs(tree, matrix, depth):
     if len(l) == 1:
         return l
 
-    graph = graph_of_incompatibility(l)
+    graph = graph_of_incompatibility(l, matrix)
     return get_independent_set(graph, seed=3)
 
 
@@ -136,6 +158,7 @@ def treematch(tree, matrix, depth):
         padding = 0
         if p % k != 0:
             matrix = extend_comm_matrix(tree, matrix, d)
+        print(matrix)
         groups[d] = remove_virtual_group(group_procs(tree, matrix, d), p)
         matrix = aggregate_comm_matrix(matrix, groups[d])
 
@@ -168,7 +191,7 @@ def main():
 
 
     depth = 4
-    groups = treematch(G, comm_matrix_6procs, depth)
+    groups = treematch(G, comm_matrix, depth)
     depth1_nodes = G.adj['d0_0']
     for vproc, node in zip(groups[1][0], depth1_nodes):
         G.nodes[node]['vproc'] = vproc
